@@ -1,0 +1,81 @@
+name: shoplite
+
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root_dev}
+      MYSQL_DATABASE: ${DB_DATABASE:-shoplite}
+      MYSQL_USER: ${DB_USERNAME:-shoplite}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-shoplite_dev}
+    ports:
+      - "${FORWARD_DB_PORT:-3307}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  backend:
+    build:
+      context: ./backend
+      args:
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+    restart: unless-stopped
+    working_dir: /var/www/html
+    volumes:
+      - ./backend:/var/www/html
+    environment:
+      DB_CONNECTION: mysql
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_DATABASE: ${DB_DATABASE:-shoplite}
+      DB_USERNAME: ${DB_USERNAME:-shoplite}
+      DB_PASSWORD: ${DB_PASSWORD:-shoplite_dev}
+      PHP_CLI_SERVER_WORKERS: 4
+    command: >
+      sh -c "composer install --no-interaction --prefer-dist &&
+             php artisan serve --host=0.0.0.0 --port=8000 --no-reload"
+    ports:
+      - "${FORWARD_API_PORT:-8000}:8000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  frontend:
+    image: node:22-alpine
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+      - frontend-node-modules:/app/node_modules
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+    ports:
+      - "${FORWARD_VITE_PORT:-5173}:5173"
+    depends_on:
+      - backend
+
+  phpmyadmin:
+    image: phpmyadmin:5.2
+    restart: unless-stopped
+    environment:
+      PMA_HOST: mysql
+      PMA_PORT: 3306
+      PMA_USER: ${DB_USERNAME:-shoplite}
+      PMA_PASSWORD: ${DB_PASSWORD:-shoplite_dev}
+      UPLOAD_LIMIT: 64M
+    ports:
+      - "${FORWARD_PMA_PORT:-8080}:80"
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+volumes:
+  mysql-data:
+  frontend-node-modules:
